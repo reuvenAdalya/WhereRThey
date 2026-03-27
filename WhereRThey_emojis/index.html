@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>🐜איפה הם? - משחק לכל המשפחה🐧</title>
+  
+  <!-- טעינת React ו-Tailwind ישירות לדפדפן -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden; /* מאפשר גלילה אנכית בתפריט ומונע גלילה אופקית מיותרת */
+    }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    @keyframes bounce-short {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+    .animate-bounce-short { animation: bounce-short 1s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- קוד המשחק -->
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+    // --- Game Data & Configurations ---
+    const ANIMALS = {
+      giraffe: { id: 'giraffe', name: 'ג\'ירפה', emoji: '🦒', similar: ['🐫', '🐆', '🐅', '🐎', '🦮', '🐪', '🦓', '🦕'] },
+      penguin: { id: 'penguin', name: 'פינגווין', emoji: '🐧', similar: ['🐼', '🦓', '🦨', '🐄', '🦅', '🦇', '🐦‍⬛', '🕷️'] },
+      dog:     { id: 'dog', name: 'כלב', emoji: '🐕', similar: ['🦊', '🐻', '🐴', '🐵', '🦁', '🐺', '🐗', '🦧'] },
+      ant:     { id: 'ant', name: 'נמלה', emoji: '🐜', similar: ['🕷️', '🪲', '🦗', '🦟', '🪰', '🐞', '🐛', '🦂'] }
+    };
+
+    const DIFFICULTIES = {
+      easy:      { id: 'easy', name: 'קל', points: 10, count: 80, sizeRange: [30, 50] },
+      medium:    { id: 'medium', name: 'בינוני', points: 20, count: 200, sizeRange: [25, 45] },
+      hard:      { id: 'hard', name: 'קשה', points: 30, count: 400, sizeRange: [20, 35] },
+      very_hard: { id: 'very_hard', name: 'קשה מאד', points: 50, count: 700, sizeRange: [15, 30] }
+    };
+
+ 
+    const TIME_LIMITS = {
+      0:  { id: 0, name: 'ללא הגבלת זמן' },
+      10: { id: 10, name: '10 שניות (x10 נקודות)' },
+      30: { id: 30, name: '30 שניות (x5 נקודות)' },
+      60: { id: 60, name: 'דקה (x2 נקודות)' }
+    };
+
+    const POOLS = {
+      easy:   ['🍎', '🚗', '⚽', '🎈', '🍔', '🚲', '💡', '🎵', '📚', '🎸', '🍕', '🚀', '🎁', '⭐', '🌈', '🍦', '💎'],
+      medium: ['🐒', '🐸', '🐷', '🐔', '🐙', '🐠', '🦋', '🐢', '🐌', '🦀', '🦆', '🦉', '🐬', '🐡', '🐊', '🦜', '🦩']
+    };
+
+    const BOARD_WIDTH = 2500;
+    const BOARD_HEIGHT = 2500;
+
+    // --- Helper Functions ---
+    const getRandomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+    const generateBoardItems = (difficultyId, targetAnimalId, isBonus = false, bonusTargetEmoji = null) => {
+      const config = DIFFICULTIES[difficultyId];
+      const items = [];
+      const targetData = ANIMALS[targetAnimalId];
+      
+      const finalTargetEmoji = isBonus && bonusTargetEmoji ? bonusTargetEmoji : targetData.emoji;
+      
+      for (let i = 0; i < config.count; i++) {
+        let emojiPool = [];
+        if (difficultyId === 'easy') emojiPool = POOLS.easy;
+        else if (difficultyId === 'medium') emojiPool = [...POOLS.easy, ...POOLS.medium];
+        else if (difficultyId === 'hard') emojiPool = [...POOLS.medium, ...targetData.similar];
+        else emojiPool = [...targetData.similar, targetData.similar[0], targetData.similar[1]]; 
+
+        const randomEmoji = emojiPool[Math.floor(Math.random() * emojiPool.length)];
+        if (randomEmoji === finalTargetEmoji) continue;
+
+        items.push({
+          id: `item_${i}`,
+          emoji: randomEmoji,
+          isTarget: false,
+          left: getRandomInt(50, BOARD_WIDTH - 50),
+          top: getRandomInt(50, BOARD_HEIGHT - 50),
+          fontSize: getRandomInt(config.sizeRange[0], config.sizeRange[1]),
+          rotate: getRandomInt(-45, 45),
+          zIndex: getRandomInt(1, 100)
+        });
+      }
+
+      const targetItem = {
+        id: 'target_item',
+        emoji: finalTargetEmoji,
+        isTarget: true,
+        left: getRandomInt(100, BOARD_WIDTH - 100),
+        top: getRandomInt(100, BOARD_HEIGHT - 100),
+        fontSize: config.sizeRange[1] + 5,
+        rotate: getRandomInt(-20, 20),
+        zIndex: 1000
+      };
+      
+      items.push(targetItem);
+      return { items: items.sort(() => Math.random() - 0.5), targetItem };
+    };
+
+    // --- Components ---
+    const Board = React.memo(({ items, onTargetFound }) => {
+      return (
+        <div 
+          className="relative bg-[#e6f4f1]" 
+          style={{ width: BOARD_WIDTH, height: BOARD_HEIGHT, backgroundImage: 'radial-gradient(#c5e3db 2px, transparent 2px)', backgroundSize: '40px 40px' }}
+        >
+          {items.map(item => (
+            <div
+              key={item.id}
+              onClick={() => item.isTarget && onTargetFound()}
+              className={`absolute cursor-pointer transition-transform hover:scale-125`}
+              style={{
+                left: item.left,
+                top: item.top,
+                fontSize: `${item.fontSize}px`,
+                transform: `translate(-50%, -50%) rotate(${item.rotate}deg)`,
+                zIndex: item.zIndex,
+                userSelect: 'none'
+              }}
+            >
+              {item.emoji}
+            </div>
+          ))}
+        </div>
+      );
+    });
+
+    function App() {
+      const [view, setView] = useState('menu');
+      const [totalScore, setTotalScore] = useState(0);
+      
+      const [difficulty, setDifficulty] = useState('easy');
+      const [animal, setAnimal] = useState('giraffe');
+      const [timeLimit, setTimeLimit] = useState(0);
+      
+      const [boardItems, setBoardItems] = useState([]);
+      const [targetItem, setTargetItem] = useState(null);
+      const [timeLeft, setTimeLeft] = useState(null);
+      const [hintUsed, setHintUsed] = useState(false);
+      const [showHintModal, setShowHintModal] = useState(false);
+      
+      const [isBonusMode, setIsBonusMode] = useState(false);
+      const [bonusEmoji, setBonusEmoji] = useState(null);
+
+      const boardContainerRef = useRef(null);
+      const dragData = useRef({ isDown: false, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0 });
+
+      const handleStartGameClick = () => {
+        // מעבר למסך מלא בלחיצה על התחל
+        const docEl = document.documentElement;
+        if (docEl.requestFullscreen) {
+          docEl.requestFullscreen().catch(err => console.log(err));
+        } else if (docEl.webkitRequestFullscreen) {
+          docEl.webkitRequestFullscreen();
+        }
+        startGame(null);
+      };
+
+      const startGame = (customBonusEmoji = null) => {
+        const isBonus = !!customBonusEmoji;
+        setIsBonusMode(isBonus);
+        setBonusEmoji(customBonusEmoji);
+        
+        const { items, targetItem: target } = generateBoardItems(difficulty, animal, isBonus, customBonusEmoji);
+        setBoardItems(items);
+        setTargetItem(target);
+        setTimeLeft(timeLimit > 0 ? timeLimit : null);
+        setHintUsed(false);
+        setShowHintModal(false);
+        setView('playing');
+        
+        setTimeout(() => {
+          if (boardContainerRef.current) {
+            boardContainerRef.current.scrollLeft = (BOARD_WIDTH / 2) - (boardContainerRef.current.clientWidth / 2);
+            boardContainerRef.current.scrollTop = (BOARD_HEIGHT / 2) - (boardContainerRef.current.clientHeight / 2);
+          }
+        }, 100);
+      };
+
+      const handleTargetFound = useCallback(() => {
+        setView('won');
+        
+        // חישוב המכפיל בהתאם לזמן הנבחר
+        let multiplier = 1;
+        if (timeLimit === 60) multiplier = 2;
+        else if (timeLimit === 30) multiplier = 5;
+        else if (timeLimit === 10) multiplier = 10;
+
+        const basePts = DIFFICULTIES[difficulty].points * multiplier;
+        const finalPts = hintUsed ? Math.floor(basePts / 2) : basePts;
+        
+        setTotalScore(prev => prev + finalPts);
+      }, [difficulty, hintUsed, timeLimit]);
+
+      const useHint = () => {
+        if (!hintUsed) setHintUsed(true);
+        setShowHintModal(true);
+      };
+
+      const startBonusRound = () => {
+        const randomBonusItem = POOLS.medium[Math.floor(Math.random() * POOLS.medium.length)];
+        startGame(randomBonusItem);
+      };
+
+      const quitToMenu = () => {
+        // יציאה ממסך מלא בחזרה לתפריט
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(err => console.log(err));
+        } else if (document.webkitFullscreenElement) {
+          document.webkitExitFullscreen();
+        }
+        
+        setView('menu');
+        setIsBonusMode(false);
+        setBonusEmoji(null);
+      };
+
+      // --- Mouse & Touch Drag Logic ---
+      const handleMouseDown = (e) => {
+        if (!boardContainerRef.current) return;
+        dragData.current.isDown = true;
+        dragData.current.startX = e.pageX - boardContainerRef.current.offsetLeft;
+        dragData.current.startY = e.pageY - boardContainerRef.current.offsetTop;
+        dragData.current.scrollLeft = boardContainerRef.current.scrollLeft;
+        dragData.current.scrollTop = boardContainerRef.current.scrollTop;
+      };
+
+      const handleTouchStart = (e) => {
+        if (!boardContainerRef.current) return;
+        dragData.current.isDown = true;
+        dragData.current.startX = e.touches[0].pageX - boardContainerRef.current.offsetLeft;
+        dragData.current.startY = e.touches[0].pageY - boardContainerRef.current.offsetTop;
+        dragData.current.scrollLeft = boardContainerRef.current.scrollLeft;
+        dragData.current.scrollTop = boardContainerRef.current.scrollTop;
+      };
+
+      const handleMouseLeave = () => dragData.current.isDown = false;
+      const handleMouseUp = () => dragData.current.isDown = false;
+      const handleTouchEnd = () => dragData.current.isDown = false;
+
+      const handleMouseMove = (e) => {
+        if (!dragData.current.isDown || !boardContainerRef.current) return;
+        e.preventDefault();
+        const walkX = (e.pageX - boardContainerRef.current.offsetLeft - dragData.current.startX); 
+        const walkY = (e.pageY - boardContainerRef.current.offsetTop - dragData.current.startY);
+        boardContainerRef.current.scrollLeft = dragData.current.scrollLeft - walkX;
+        boardContainerRef.current.scrollTop = dragData.current.scrollTop - walkY;
+      };
+
+      const handleTouchMove = (e) => {
+        if (!dragData.current.isDown || !boardContainerRef.current) return;
+        const walkX = (e.touches[0].pageX - boardContainerRef.current.offsetLeft - dragData.current.startX); 
+        const walkY = (e.touches[0].pageY - boardContainerRef.current.offsetTop - dragData.current.startY);
+        boardContainerRef.current.scrollLeft = dragData.current.scrollLeft - walkX;
+        boardContainerRef.current.scrollTop = dragData.current.scrollTop - walkY;
+      };
+
+      // Timer Logic
+      useEffect(() => {
+        let timer;
+        if (view === 'playing' && timeLeft !== null && timeLeft > 0) {
+          timer = setInterval(() => {
+            setTimeLeft(prev => {
+              if (prev <= 1) {
+                clearInterval(timer);
+                setView('game_over');
+                return 0;
+              }
+              return prev - 1;
+            });
+          }, 1000);
+        }
+        return () => clearInterval(timer);
+      }, [view, timeLeft]);
+
+      // Hint Items
+      const hintItems = useMemo(() => {
+        if (!targetItem || !showHintModal) return [];
+        return boardItems.filter(item => {
+          const dx = item.left - targetItem.left;
+          const dy = item.top - targetItem.top;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          return distance < 120;
+        });
+      }, [boardItems, targetItem, showHintModal]);
+
+
+      // --- Views ---
+      const renderMenu = () => (
+        <div className="flex flex-col items-center justify-center min-h-screen bg-blue-50 p-4 py-10" dir="rtl">
+          <div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-lg border-4 border-blue-200 text-center my-auto">
+            <h1 className="text-5xl font-black text-blue-600 mb-2 flex items-center justify-center gap-3">
+              <span className="text-4xl">🔍</span>
+              איפה הם?
+            </h1>
+            <p className="text-gray-500 mb-8 text-lg">מצאו את החיה המסתתרת🐜🦒🐕🐧  ואספו נקודות!</p>
+            
+            <div className="bg-yellow-100 rounded-xl p-4 mb-8 flex items-center justify-center gap-3 font-bold text-yellow-700 text-xl border border-yellow-300">
+              <span>🏆</span>
+              סה"כ נקודות: {totalScore}
+            </div>
+
+            <div className="space-y-6 text-right">
+              <div>
+                <label className="block text-gray-700 font-bold mb-2 text-lg">1. איזו חיה נחפש?</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {Object.values(ANIMALS).map(a => (
+                    <button
+                      key={a.id}
+                      onClick={() => setAnimal(a.id)}
+                      className={`py-3 px-2 rounded-xl text-2xl flex flex-col items-center justify-center border-2 transition-all ${animal === a.id ? 'border-blue-500 bg-blue-100 shadow-md transform scale-105' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'}`}
+                    >
+                      <span>{a.emoji}</span>
+                      <span className="text-sm font-semibold mt-1 text-gray-700">{a.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-700 font-bold mb-2 text-lg">2. רמת קושי</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.values(DIFFICULTIES).map(d => (
+                    <button
+                      key={d.id}
+                      onClick={() => setDifficulty(d.id)}
+                      className={`py-2 px-3 rounded-xl font-bold flex justify-between items-center border-2 transition-all ${difficulty === d.id ? 'border-green-500 bg-green-100 text-green-800 shadow-md' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      <span>{d.name}</span>
+                      <span className="text-xs bg-white px-2 py-1 rounded-full">{d.points} נק'</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-700 font-bold mb-2 text-lg">3. שעון עצר</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.values(TIME_LIMITS).map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => setTimeLimit(t.id)}
+                      className={`py-2 px-3 rounded-xl font-bold border-2 transition-all ${timeLimit === t.id ? 'border-purple-500 bg-purple-100 text-purple-800 shadow-md' : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <button 
+              onClick={handleStartGameClick}
+              className="mt-10 w-full bg-blue-500 hover:bg-blue-600 text-white font-black text-2xl py-4 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-3"
+            >
+              <span>▶️</span> התחילו במשחק!
+            </button>
+          </div>
+        </div>
+      );
+
+      const renderPlaying = () => {
+        const currentTargetEmoji = isBonusMode ? bonusEmoji : ANIMALS[animal].emoji;
+        return (
+          // כאן הוספנו את touch-none ו-overscroll-none כדי לנעול את מסך המשחק עצמו במובייל
+          <div className="flex flex-col h-screen bg-gray-100 overflow-hidden touch-none overscroll-none" dir="rtl">
+            <div className="bg-white shadow-md z-10 px-4 py-3 flex flex-wrap items-center justify-between border-b-4 border-blue-400 gap-2">
+              <div className="flex items-center gap-4">
+                <button onClick={quitToMenu} className="text-gray-400 hover:text-gray-700 font-bold text-sm">
+                  &times; יציאה
+                </button>
+                <div className="bg-blue-100 text-blue-800 px-4 py-2 rounded-full font-bold flex items-center gap-2 text-lg shadow-inner">
+                  <span>🔍</span>
+                  חפשו את: <span className="text-3xl ml-2">{currentTargetEmoji}</span>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-3">
+                {timeLeft !== null && (
+                  <div className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg ${timeLeft <= 10 ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-gray-100 text-gray-700'}`}>
+                    <span>⏱️</span>
+                    {timeLeft} שניות
+                  </div>
+                )}
+                
+                <div className="flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg bg-yellow-100 text-yellow-700">
+                  <span>🏆</span>
+                  {totalScore}
+                </div>
+
+                <button 
+                  onClick={useHint}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg transition-colors shadow-sm border-2 ${hintUsed ? 'bg-gray-200 text-gray-500 border-gray-300' : 'bg-purple-100 text-purple-700 border-purple-300 hover:bg-purple-200'}`}
+                >
+                  <span>💡</span>
+                  רמז {hintUsed ? '(נוצל)' : '(-50%)'}
+                </button>
+              </div>
+            </div>
+
+            <div 
+              ref={boardContainerRef}
+              id="board-container" 
+              className="flex-1 overflow-auto cursor-grab active:cursor-grabbing relative hide-scrollbar shadow-inner"
+              onMouseDown={handleMouseDown}
+              onMouseLeave={handleMouseLeave}
+              onMouseUp={handleMouseUp}
+              onMouseMove={handleMouseMove}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+              onTouchCancel={handleTouchEnd}
+              onTouchMove={handleTouchMove}
+            >
+              <Board items={boardItems} onTargetFound={handleTargetFound} />
+            </div>
+
+            {showHintModal && targetItem && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                 <div className="bg-white p-6 rounded-3xl shadow-2xl text-center max-w-sm w-full relative">
+                    <button onClick={() => setShowHintModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-800">
+                      &times; סגור
+                    </button>
+                    <h2 className="text-2xl font-black text-purple-700 mb-4">רמז סביבתי</h2>
+                    <p className="text-gray-600 mb-6 text-sm">הנה האזור שבו נמצאת המטרה (נקודות החיפוש נחתכו בחצי).</p>
+                    
+                    <div className="mx-auto w-48 h-48 rounded-full border-8 border-purple-300 overflow-hidden relative bg-[#e6f4f1] shadow-inner mb-4">
+                        {hintItems.map(item => (
+                          <div 
+                            key={`hint_${item.id}`}
+                            className="absolute"
+                            style={{
+                               left: 96 + (item.left - targetItem.left),
+                               top: 96 + (item.top - targetItem.top),
+                               fontSize: `${item.fontSize}px`,
+                               transform: `translate(-50%, -50%) rotate(${item.rotate}deg)`,
+                            }}
+                          >
+                             {item.emoji}
+                          </div>
+                        ))}
+                    </div>
+
+                    <button 
+                      onClick={() => setShowHintModal(false)}
+                      className="w-full py-3 bg-purple-500 hover:bg-purple-600 text-white font-bold rounded-xl transition-colors"
+                    >
+                      המשיכו לחפש!
+                    </button>
+                 </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const renderWon = () => {
+        // מחשב שוב את הזכייה למסך הניצחון 
+        let multiplier = 1;
+        if (timeLimit === 60) multiplier = 2;
+        else if (timeLimit === 30) multiplier = 5;
+        else if (timeLimit === 10) multiplier = 10;
+        
+        const basePts = DIFFICULTIES[difficulty].points * multiplier;
+        const finalPts = hintUsed ? Math.floor(basePts / 2) : basePts;
+
+        return (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-green-500/90 backdrop-blur-md p-4" dir="rtl">
+            <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full transform animate-bounce-short">
+              <div className="text-6xl mb-4">🎉</div>
+              <h2 className="text-4xl font-black text-green-600 mb-2">כל הכבוד! מצאת!</h2>
+              <p className="text-xl text-gray-600 mb-6">
+                זכית ב-<strong className="text-yellow-500 text-3xl mx-2">{finalPts}</strong> נקודות
+                {hintUsed && <span className="block text-sm text-red-400 mt-1">(כולל הפחתה על שימוש ברמז)</span>}
+              </p>
+              
+              <div className="space-y-4">
+                <button 
+                  onClick={quitToMenu}
+                  className="w-full py-4 bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold rounded-2xl flex items-center justify-center gap-2 transition-colors text-lg"
+                >
+                   המשך לשלב הבא <span>➡️</span>
+                </button>
+                
+                <button 
+                  onClick={() => {
+                     // אין צורך לצאת פה ממסך מלא כי אנחנו ממשיכים למשחק הבונוס!
+                     setView('menu');
+                     startBonusRound();
+                  }}
+                  className="w-full py-4 bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-white font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg transition-transform hover:scale-105 text-lg"
+                >
+                  <span>⭐</span> חפשו פריט בונוס בתמונה!
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const renderGameOver = () => (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-red-500/90 backdrop-blur-md p-4" dir="rtl">
+          <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full">
+            <div className="text-6xl mb-4">⏰</div>
+            <h2 className="text-4xl font-black text-red-600 mb-2">נגמר הזמן!</h2>
+            <p className="text-xl text-gray-600 mb-8">לא נורא, אפשר לנסות שוב!</p>
+            
+            <button 
+              onClick={quitToMenu}
+              className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold rounded-2xl flex items-center justify-center gap-2 transition-colors text-lg"
+            >
+               חזרה לתפריט הראשי
+            </button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="font-sans text-gray-900 select-none min-h-screen w-full">
+          {view === 'menu' && renderMenu()}
+          {view === 'playing' && renderPlaying()}
+          {view === 'won' && renderWon()}
+          {view === 'game_over' && renderGameOver()}
+        </div>
+      );
+    }
+
+    // Render the app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
