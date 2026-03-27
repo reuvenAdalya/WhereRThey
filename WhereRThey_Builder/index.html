@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>מפעל השלבים - יוצר משחקי איפה הם מתחבאים</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alef:wght@400;700&display=swap" rel="stylesheet">
+  
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    body { 
+      margin: 0; 
+      padding: 0; 
+      background-color: #f0fdf4; 
+      font-family: 'Alef', sans-serif; 
+      color: #064e3b; 
+    }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .marker-pulse {
+      animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(34, 197, 94, 0); }
+      100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+    }
+    .chunky-btn {
+      transition: all 0.1s;
+      box-shadow: 0 6px 0 rgba(0,0,0,0.15);
+    }
+    .chunky-btn:active {
+      transform: translateY(4px);
+      box-shadow: 0 2px 0 rgba(0,0,0,0.15);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // --- Audio Synthesis Engine ---
+    const AudioEngine = {
+      playTone: (freq, type, timeOffset, duration, vol=0.1) => {
+        try {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if(!window.audioCtx) window.audioCtx = new AudioContext();
+          if(window.audioCtx.state === 'suspended') window.audioCtx.resume();
+          
+          const osc = window.audioCtx.createOscillator();
+          const gain = window.audioCtx.createGain();
+          osc.type = type;
+          
+          const startTime = window.audioCtx.currentTime + timeOffset;
+          osc.frequency.setValueAtTime(freq, startTime);
+          
+          gain.gain.setValueAtTime(0, startTime);
+          gain.gain.linearRampToValueAtTime(vol, startTime + 0.05);
+          gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+          
+          osc.connect(gain);
+          gain.connect(window.audioCtx.destination);
+          
+          osc.start(startTime);
+          osc.stop(startTime + duration);
+        } catch(e) { console.warn("Audio not supported or blocked", e); }
+      },
+      playPop: () => {
+        AudioEngine.playTone(800, 'sine', 0, 0.15, 0.1);
+        AudioEngine.playTone(1200, 'sine', 0.05, 0.15, 0.1);
+      },
+      playHappySave: () => {
+        // צליל שמח וקופצני (ארפג'יו של אקורד מז'ור) להוספת שלב
+        [523, 659, 783, 1046].forEach((f, i) => AudioEngine.playTone(f, 'sine', i * 0.1, 0.2, 0.1));
+      },
+      playWin: () => {
+        [440, 554, 659].forEach((f, i) => AudioEngine.playTone(f, 'square', i * 0.15, 0.4, 0.05));
+      },
+      playEpicWin: () => {
+        // רצף מהיר המדמה "כפיים" / שמחה גדולה
+        [261, 329, 392, 523, 659, 783, 1046, 1318].forEach((f, i) => AudioEngine.playTone(f, 'square', i * 0.08, 0.2, 0.05));
+      },
+      playMilestone: () => {
+        [392, 392, 392, 311, 466, 392, 311, 466, 392].forEach((f, i) => {
+          const isLong = (i === 8);
+          AudioEngine.playTone(f, 'triangle', i * 0.18, isLong ? 0.8 : 0.2, 0.1);
+        });
+      }
+    };
+    window.AudioEngine = AudioEngine;
+
+    // --- Template for the Exported Game ---
+    const SCRIPT_END = '<' + '/script>';
+    
+    const getGameHTMLTemplate = (levelsJson, bgLeft, bgRight) => {
+      const bgLeftStr = bgLeft ? `"${bgLeft}"` : 'null';
+      const bgRightStr = bgRight ? `"${bgRight}"` : 'null';
+
+      return `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>איפה הם מתחבאים? - המשחק המלא</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alef:wght@400;700&display=swap" rel="stylesheet">
+  
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin>${SCRIPT_END}
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin>${SCRIPT_END}
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js">${SCRIPT_END}
+  <script src="https://cdn.tailwindcss.com">${SCRIPT_END}
+  <style>
+    html, body { 
+      margin: 0; padding: 0; overflow-x: hidden; 
+      background-color: #f0fdf4; font-family: 'Alef', sans-serif; color: #064e3b;
+    }
+    .target-portrait { object-fit: contain; width: 100%; height: 100%; transform: scale(1.1); }
+    @keyframes bounce-short { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    .animate-bounce-short { animation: bounce-short 1s ease-in-out infinite; }
+    .grayscale-found { filter: grayscale(100%) opacity(50%); transition: all 0.5s; }
+    .chunky-btn { transition: all 0.1s; box-shadow: 0 6px 0 rgba(0,0,0,0.15); }
+    .chunky-btn:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,0.15); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script>
+    window.IMPORTED_LEVELS = ${levelsJson};
+    window.MENU_BG_LEFT = ${bgLeftStr};
+    window.MENU_BG_RIGHT = ${bgRightStr};
+    
+    window.AudioEngine = {
+      playTone: (freq, type, timeOffset, duration, vol=0.1) => {
+        try {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if(!window.audioCtx) window.audioCtx = new AudioContext();
+          if(window.audioCtx.state === 'suspended') window.audioCtx.resume();
+          const osc = window.audioCtx.createOscillator();
+          const gain = window.audioCtx.createGain();
+          osc.type = type;
+          const startTime = window.audioCtx.currentTime + timeOffset;
+          osc.frequency.setValueAtTime(freq, startTime);
+          gain.gain.setValueAtTime(0, startTime);
+          gain.gain.linearRampToValueAtTime(vol, startTime + 0.05);
+          gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+          osc.connect(gain);
+          gain.connect(window.audioCtx.destination);
+          osc.start(startTime);
+          osc.stop(startTime + duration);
+        } catch(e) {}
+      },
+      playPop: () => {
+        window.AudioEngine.playTone(800, 'sine', 0, 0.15, 0.1);
+        window.AudioEngine.playTone(1200, 'sine', 0.05, 0.15, 0.1);
+      },
+      playWin: () => {
+        [440, 554, 659].forEach((f, i) => window.AudioEngine.playTone(f, 'square', i * 0.15, 0.4, 0.05));
+      },
+      playEpicWin: () => {
+        [261, 329, 392, 523, 659, 783, 1046, 1318].forEach((f, i) => window.AudioEngine.playTone(f, 'square', i * 0.08, 0.2, 0.05));
+      },
+      playMilestone: () => {
+        [392, 392, 392, 311, 466, 392, 311, 466, 392].forEach((f, i) => {
+          const isLong = (i === 8);
+          window.AudioEngine.playTone(f, 'triangle', i * 0.18, isLong ? 0.8 : 0.2, 0.1);
+        });
+      }
+    };
+  ${SCRIPT_END}
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const LEVELS_DATABASE = window.IMPORTED_LEVELS;
+
+    const DIFFICULTIES = {
+      easy: { name: 'קל', points: 10 },
+      medium: { name: 'בינוני', points: 30 },
+      hard: { name: 'קשה', points: 50 }
+    };
+
+    function App() {
+      const [view, setView] = useState('menu');
+      const [score, setScore] = useState(0);
+      const [activeLevel, setActiveLevel] = useState(null);
+      const [foundTargets, setFoundTargets] = useState([]); 
+      const [clickFeedback, setClickFeedback] = useState(null);
+      
+      const [selectedTime, setSelectedTime] = useState(0);
+      const [timeLeft, setTimeLeft] = useState(null);
+      const [lastEarned, setLastEarned] = useState(0);
+      
+      const [completedLevels, setCompletedLevels] = useState([]);
+      
+      const imageRef = useRef(null);
+      const containerRef = useRef(null);
+      const dragData = useRef({ isDown: false, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0, wasDragging: false });
+
+      const handleUserInteraction = () => {
+         if (window.AudioContext || window.webkitAudioContext) {
+           if(!window.audioCtx) window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+           if(window.audioCtx.state === 'suspended') window.audioCtx.resume();
+         }
+      };
+
+      const loadLevel = (levelInfo) => {
+        setView('loading');
+        setFoundTargets([]);
+        setClickFeedback(null);
+        setTimeLeft(selectedTime > 0 ? selectedTime : null);
+        
+        const level = JSON.parse(JSON.stringify(levelInfo));
+        const img = new Image();
+        img.onload = () => {
+          const diagonal = Math.sqrt(img.width * img.width + img.height * img.height);
+          let radiusPercent = 0.02; 
+          if (level.difficulty === 'easy') radiusPercent = 0.03;
+          else if (level.difficulty === 'hard') radiusPercent = 0.01;
+          
+          const sourceRadius = Math.max(20, Math.round(diagonal * radiusPercent));
+
+          level.targets = level.targets.map((t, index) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 160; canvas.height = 160;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.beginPath();
+            ctx.arc(80, 80, 80, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 160, 160);
+            
+            const drawSize = Math.min(160, sourceRadius * 2 * 3);
+            const offset = (160 - drawSize) / 2;
+            ctx.drawImage(img, t.x - sourceRadius, t.y - sourceRadius, sourceRadius * 2, sourceRadius * 2, offset, offset, drawSize, drawSize);
+            return { ...t, id: index, cropUrl: canvas.toDataURL('image/png') };
+          });
+          
+          setActiveLevel(level);
+          setView('playing');
+          
+          setTimeout(() => {
+            if (containerRef.current && imageRef.current) {
+              containerRef.current.scrollLeft = (imageRef.current.clientWidth / 2) - (containerRef.current.clientWidth / 2);
+              containerRef.current.scrollTop = (imageRef.current.clientHeight / 2) - (containerRef.current.clientHeight / 2);
+            }
+          }, 100);
+        };
+        img.src = level.bgUrl;
+      };
+
+      useEffect(() => {
+        let timer;
+        if (view === 'playing' && timeLeft !== null && timeLeft > 0 && foundTargets.length < activeLevel.targets.length) {
+          timer = setInterval(() => {
+            setTimeLeft(prev => {
+              if (prev <= 1) {
+                clearInterval(timer);
+                setView('game_over');
+                return 0;
+              }
+              return prev - 1;
+            });
+          }, 1000);
+        }
+        return () => clearInterval(timer);
+      }, [view, timeLeft, foundTargets, activeLevel]);
+
+      const handleImageClick = (e) => {
+        if (view !== 'playing' || !activeLevel || clickFeedback) return;
+        if (dragData.current.wasDragging) { dragData.current.wasDragging = false; return; }
+
+        const img = imageRef.current;
+        if (!img) return;
+
+        const rect = img.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        const scaleX = img.naturalWidth / rect.width;
+        const scaleY = img.naturalHeight / rect.height;
+        
+        const actualClickX = clickX * scaleX;
+        const actualClickY = clickY * scaleY;
+
+        let foundOne = false;
+
+        for (const t of activeLevel.targets) {
+          if (foundTargets.includes(t.id)) continue;
+          
+          const dx = actualClickX - t.x;
+          const dy = actualClickY - t.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          const dynamicTolerance = t.tolerance <= 1 ? t.tolerance * Math.max(img.naturalWidth, img.naturalHeight) : t.tolerance;
+
+          if (distance <= dynamicTolerance) {
+            foundOne = true;
+            window.AudioEngine.playPop(); 
+            const newFound = [...foundTargets, t.id];
+            setFoundTargets(newFound);
+            
+            setClickFeedback({ type: 'success', x: e.clientX, y: e.clientY });
+            setTimeout(() => setClickFeedback(null), 1000);
+            
+            if (newFound.length === activeLevel.targets.length) {
+              setTimeout(() => {
+                const basePoints = DIFFICULTIES[activeLevel.difficulty]?.points || 10;
+                const multiplier = selectedTime === 60 ? 2 : selectedTime === 30 ? 4 : selectedTime === 10 ? 10 : 1;
+                const totalEarned = basePoints * multiplier;
+                
+                const prevScore = score;
+                const newTotalScore = score + totalEarned;
+                
+                setLastEarned(totalEarned);
+                setScore(newTotalScore);
+                
+                const oldMilestone = Math.floor(prevScore / 500);
+                const newMilestone = Math.floor(newTotalScore / 500);
+                
+                if (newMilestone > oldMilestone && newMilestone > 0) {
+                   window.AudioEngine.playMilestone();
+                } else if (totalEarned >= 200) {
+                   window.AudioEngine.playEpicWin();
+                } else {
+                   window.AudioEngine.playWin();
+                }
+
+                setCompletedLevels(prev => {
+                   if (!prev.includes(activeLevel.id)) return [...prev, activeLevel.id];
+                   return prev;
+                });
+                
+                setView('won');
+              }, 1200);
+            }
+            break; 
+          }
+        }
+
+        if (!foundOne) {
+          setClickFeedback({ type: 'fail', x: e.clientX, y: e.clientY });
+          setTimeout(() => setClickFeedback(null), 800);
+        }
+      };
+
+      const handleMouseDown = (e) => {
+        if (!containerRef.current) return;
+        dragData.current.isDown = true;
+        dragData.current.wasDragging = false;
+        dragData.current.startX = e.pageX - containerRef.current.offsetLeft;
+        dragData.current.startY = e.pageY - containerRef.current.offsetTop;
+        dragData.current.scrollLeft = containerRef.current.scrollLeft;
+        dragData.current.scrollTop = containerRef.current.scrollTop;
+      };
+      
+      const handleTouchStart = (e) => {
+        if (!containerRef.current) return;
+        dragData.current.isDown = true;
+        dragData.current.wasDragging = false;
+        dragData.current.startX = e.touches[0].pageX - containerRef.current.offsetLeft;
+        dragData.current.startY = e.touches[0].pageY - containerRef.current.offsetTop;
+        dragData.current.scrollLeft = containerRef.current.scrollLeft;
+        dragData.current.scrollTop = containerRef.current.scrollTop;
+      };
+
+      const handleMouseUp = () => dragData.current.isDown = false;
+      const handleMouseLeave = () => dragData.current.isDown = false;
+      const handleTouchEnd = () => dragData.current.isDown = false;
+
+      const handleMouseMove = (e) => {
+        if (!dragData.current.isDown || !containerRef.current) return;
+        e.preventDefault();
+        const walkX = (e.pageX - containerRef.current.offsetLeft - dragData.current.startX); 
+        const walkY = (e.pageY - containerRef.current.offsetTop - dragData.current.startY);
+        if (Math.abs(walkX) > 5 || Math.abs(walkY) > 5) dragData.current.wasDragging = true;
+        containerRef.current.scrollLeft = dragData.current.scrollLeft - walkX;
+        containerRef.current.scrollTop = dragData.current.scrollTop - walkY;
+      };
+
+      const handleTouchMove = (e) => {
+        if (!dragData.current.isDown || !containerRef.current) return;
+        const x = e.touches[0].pageX - containerRef.current.offsetLeft;
+        const y = e.touches[0].pageY - containerRef.current.offsetTop;
+        const walkX = (x - dragData.current.startX); 
+        const walkY = (y - dragData.current.startY);
+        if (Math.abs(walkX) > 5 || Math.abs(walkY) > 5) dragData.current.wasDragging = true;
+        containerRef.current.scrollLeft = dragData.current.scrollLeft - walkX;
+        containerRef.current.scrollTop = dragData.current.scrollTop - walkY;
+      };
+
+      const requestFullScreen = () => {
+        if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(()=>{});
+      };
+
+      return (
+        <div className="font-sans select-none min-h-screen w-full bg-green-50 text-green-900" onClick={handleUserInteraction} onTouchStart={handleUserInteraction}>
+          {view === 'menu' && (
+            <div className="relative flex flex-col items-center justify-center min-h-screen p-4 py-10 overflow-x-hidden" dir="rtl">
+             {window.MENU_BG_LEFT && <img src={window.MENU_BG_LEFT} className="fixed top-0 left-0 max-w-[15%] md:max-w-[12%] z-20 pointer-events-none drop-shadow-2xl" alt="" />}
+	     {window.MENU_BG_RIGHT && <img src={window.MENU_BG_RIGHT} className="fixed top-0 right-0 max-w-[15%] md:max-w-[12%] z-20 pointer-events-none drop-shadow-2xl" alt="" />}
+
+              <div className="bg-white/95 backdrop-blur-sm p-8 rounded-3xl shadow-2xl w-full max-w-6xl border-4 border-green-200 text-center relative z-10">
+                <h1 className="text-5xl font-black text-green-800 mb-6 drop-shadow-md">איפה הם מתחבאים?</h1>
+                
+                <div className="bg-green-50/80 border-2 border-green-200 rounded-2xl p-6 mb-8 max-w-2xl mx-auto shadow-sm">
+                  <h2 className="text-2xl font-black text-green-800 mb-4 flex items-center justify-center gap-2">
+                    <span>איך משחקים?</span> <span>🤔</span>
+                  </h2>
+                  <ul className="text-lg md:text-xl font-bold text-green-900 text-right space-y-3 w-fit mx-auto">
+                    <li className="flex items-center gap-3"><span className="text-2xl">⏱️</span> בוחרים הגבלת זמן לסיבוב</li>
+                    <li className="flex items-center gap-3"><span className="text-2xl">🖼️</span> לוחצים על אחד מהשלבים ברשימה</li>
+                    <li className="flex items-center gap-3"><span className="text-2xl">🎯</span> מוצאים את הפריטים בתמונה ולוחצים עליהם!</li>
+                  </ul>
+                </div>
+
+                <div className="flex flex-wrap justify-center items-center gap-4 mb-8">
+                  <div className="bg-green-100 rounded-xl p-4 font-bold text-green-800 text-2xl border border-green-300 shadow-sm">
+                    🏆 סה"כ נקודות: {score}
+                  </div>
+                  
+                  {(score > 0 || completedLevels.length > 0) && (
+                    <button 
+                      onClick={() => { setScore(0); setCompletedLevels([]); }} 
+                      className="bg-white border-2 border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 font-bold rounded-xl px-5 py-3 shadow-sm transition-all chunky-btn"
+                      title="אפסו את הניקוד והשלבים"
+                    >
+                      🔄 התחילו מחדש
+                    </button>
+                  )}
+                </div>
+
+                <div className="mb-10 bg-green-50/50 p-6 rounded-2xl border border-green-100">
+                  <h3 className="text-xl font-bold text-green-900 mb-4">⏱️ בחרו הגבלת זמן לסיבוב:</h3>
+                  <div className="flex justify-center gap-3 flex-wrap">
+                    {[{v:0, l:'ללא הגבלה (x1)'}, {v:60, l:'60 שניות (x2)'}, {v:30, l:'30 שניות (x4)'}, {v:10, l:'10 שניות (x10)'}].map(t => (
+                      <button 
+                        key={t.v} 
+                        onClick={() => setSelectedTime(t.v)} 
+                        className={"px-5 py-3 rounded-xl font-bold border-2 transition-all shadow-sm chunky-btn " + (selectedTime === t.v ? "border-green-600 bg-green-200 text-green-900 transform scale-105" : "border-green-200 bg-white text-green-800 hover:bg-green-100")}
+                      >
+                        {t.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-right">
+                  {['easy', 'medium', 'hard'].map(diffKey => {
+                    const diffData = DIFFICULTIES[diffKey];
+                    const diffLevels = LEVELS_DATABASE.filter(l => l.difficulty === diffKey);
+                    return (
+                      <div key={diffKey} className="bg-green-100/50 rounded-3xl p-5 border-2 border-green-200 flex flex-col shadow-inner relative">
+                        <h3 className="text-3xl font-black text-center mb-6 border-b-2 border-green-300 pb-3 text-green-900 flex items-center justify-center gap-3">
+                          {diffData.name} 
+                          <span className="text-base bg-green-600 text-white px-3 py-1 rounded-full shadow-md">{diffData.points} נק' לשלב</span>
+                        </h3>
+                        <div className="flex flex-col gap-4 flex-1">
+                          {diffLevels.length === 0 && <p className="text-center text-green-700/50 text-sm mt-4">אין שלבים ברמה זו</p>}
+                          {diffLevels.map((lvl, idx) => {
+                            const isCompleted = completedLevels.includes(lvl.id);
+                            return (
+                              <button 
+                                key={idx} 
+                                disabled={isCompleted}
+                                onClick={() => { requestFullScreen(); loadLevel(lvl); }} 
+                                className={"relative p-3 rounded-2xl flex items-center gap-4 transition-all w-full text-right group border-2 " + (isCompleted ? 'bg-gray-100 border-gray-300 opacity-70 grayscale cursor-not-allowed' : 'bg-white hover:bg-green-50 border-green-100 hover:border-green-500 shadow chunky-btn hover:shadow-md')}
+                              >
+                                <div className="w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden border-2 border-gray-100 shadow-sm bg-gray-100 group-hover:scale-105 transition-transform">
+                                  <img src={lvl.bgUrl} className="w-full h-full object-cover" alt="Thumbnail" />
+                                </div>
+                                <div className="flex flex-col flex-1 overflow-hidden">
+                                  <span className="font-bold text-xl text-green-900 leading-tight truncate mb-1">{lvl.name}</span>
+                                  <span className="text-sm font-semibold text-green-700 bg-green-100/50 px-2 py-1 rounded-lg inline-block w-max">
+                                    🔍 {lvl.targets.length} פריטים לחפש
+                                  </span>
+                                </div>
+                                {isCompleted && (
+                                  <div className="absolute -top-3 -left-3 bg-green-500 text-white font-black text-xs px-3 py-1 rounded-full shadow-lg transform -rotate-12 border-2 border-white">
+                                    ✅ הושלם
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'loading' && (
+            <div className="flex flex-col items-center justify-center min-h-screen bg-green-900 text-white p-4 text-center">
+              <div className="w-20 h-20 border-8 border-green-300 border-t-white rounded-full animate-spin mb-8"></div>
+              <h2 className="text-3xl font-black">טוען את המפה ומכין את הפריטים...</h2>
+            </div>
+          )}
+
+          {view === 'playing' && activeLevel && (
+            <div className="flex flex-col h-screen bg-gray-900 overflow-hidden touch-none overscroll-none" dir="rtl">
+              <div className="relative z-10 bg-white/95 backdrop-blur-md px-4 py-3 flex flex-wrap items-center justify-between border-b-4 border-green-500 shadow-2xl gap-2 flex-shrink-0">
+                <div className="flex items-center gap-4">
+                  <button onClick={() => setView('menu')} className="text-green-700 hover:text-green-900 font-bold bg-green-100 px-3 py-1 rounded-lg transition-colors chunky-btn">יציאה</button>
+                  <div className="flex items-center gap-3 bg-green-50 pr-4 pl-2 py-1 rounded-xl border border-green-200">
+                    <div className="text-green-900 font-black hidden md:block">
+                      מצאו {activeLevel.targets.length} אלמנטים ({foundTargets.length}/{activeLevel.targets.length}):
+                    </div>
+                    <div className="text-green-900 font-black md:hidden">
+                      ({foundTargets.length}/{activeLevel.targets.length})
+                    </div>
+                    <div className="flex gap-1 overflow-x-auto max-w-[200px] md:max-w-md hide-scrollbar">
+                      {activeLevel.targets.map(t => (
+                        <div key={t.id} className={"w-[72px] h-[72px] flex-shrink-0 rounded-full border-2 border-white shadow-sm overflow-hidden bg-white " + (foundTargets.includes(t.id) ? "grayscale-found" : "border-green-500 ring-2 ring-green-200")}>
+                          <img src={t.cropUrl} className="target-portrait" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {timeLeft !== null && (
+                    <div className={"flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg " + (timeLeft <= 10 ? "bg-red-100 text-red-700 animate-pulse border border-red-300" : "bg-green-100 text-green-800")}>
+                      <span>⏱️</span> {timeLeft}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full font-bold bg-yellow-100 text-yellow-700">🏆 {score}</div>
+                </div>
+              </div>
+
+              <div ref={containerRef} className="flex-1 overflow-auto cursor-grab active:cursor-grabbing relative hide-scrollbar" 
+                onMouseDown={handleMouseDown} onMouseLeave={handleMouseLeave} onMouseUp={handleMouseUp} onMouseMove={handleMouseMove}
+                onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} onTouchCancel={handleTouchEnd} onTouchMove={handleTouchMove}>
+                <img ref={imageRef} src={activeLevel.bgUrl} className="min-w-[150vw] md:min-w-[1500px] object-cover mx-auto select-none shadow-2xl" draggable="false" onClick={handleImageClick} />
+              </div>
+
+              {clickFeedback && (
+                <div className="fixed pointer-events-none z-50 transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: clickFeedback.x, top: clickFeedback.y }}>
+                  {clickFeedback.type === 'success' && <div className="text-7xl drop-shadow-2xl animate-bounce-short">🎯</div>}
+                  {clickFeedback.type === 'fail' && <div className="text-6xl drop-shadow-lg opacity-80">❌</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {view === 'game_over' && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-red-600/95 backdrop-blur-md p-4" dir="rtl">
+              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-bounce-short">
+                <div className="text-6xl mb-4">⏰</div>
+                <h2 className="text-4xl font-black text-red-700 mb-2">נגמר הזמן!</h2>
+                <p className="text-xl text-gray-700 mb-8">לא נורא, תמיד אפשר לנסות שוב.</p>
+                <button onClick={() => setView('menu')} className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-900 font-bold rounded-2xl text-xl transition-colors chunky-btn">חזרה לתפריט</button>
+              </div>
+            </div>
+          )}
+
+          {view === 'won' && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-green-600/95 backdrop-blur-md p-4" dir="rtl">
+              <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-md w-full animate-bounce-short">
+                <div className="text-6xl mb-4">👑</div>
+                <h2 className="text-4xl font-black text-green-700 mb-2">סיימתם את השלב!</h2>
+                <p className="text-xl text-gray-700 mb-6">
+                  זכיתם ב-<strong className="text-yellow-600 text-3xl mx-2">{lastEarned}</strong> נקודות!
+                </p>
+                <button onClick={() => setView('menu')} className="mt-2 w-full py-4 bg-green-100 hover:bg-green-200 text-green-900 font-bold rounded-2xl text-xl transition-colors chunky-btn">חזרה לתפריט</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  ${SCRIPT_END}
+</body>
+</html>`;
+    };
+
+    // --- Main Builder App ---
+    function App() {
+      const [apiKeyInput, setApiKeyInput] = useState(localStorage.getItem('ai_api_key') || '');
+      const [showApiSettings, setShowApiSettings] = useState(false);
+      const [levels, setLevels] = useState([]);
+      const [isGenerating, setIsGenerating] = useState(false);
+      const [isAnalyzing, setIsAnalyzing] = useState(false);
+      const [statusMsg, setStatusMsg] = useState('');
+      
+      const [prompt, setPrompt] = useState('A highly detailed chaotic wimmelbilder scene full of penguins in a snowy village, flat cartoon style');
+      const [currentImage, setCurrentImage] = useState(null); 
+      const [currentName, setCurrentName] = useState('שלב חדש');
+      const [currentDifficulty, setCurrentDifficulty] = useState('medium');
+      const [currentTargets, setCurrentTargets] = useState([]); 
+      
+      const [menuBgLeft, setMenuBgLeft] = useState(null);
+      const [menuBgRight, setMenuBgRight] = useState(null);
+
+      const [isDragging, setIsDragging] = useState(false);
+      const imageRef = useRef(null);
+
+      // Init audio on interaction
+      const initAudio = () => {
+         if (window.AudioContext || window.webkitAudioContext) {
+           if(!window.audioCtx) window.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+           if(window.audioCtx.state === 'suspended') window.audioCtx.resume();
+         }
+      };
+
+      const resizeImageIfNeeded = (dataUrl, maxSize = 2000) => {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            let width = img.width;
+            let height = img.height;
+
+            if (width > maxSize || height > maxSize) {
+              if (width > height) {
+                height = Math.round((height * maxSize) / width);
+                width = maxSize;
+              } else {
+                width = Math.round((width * maxSize) / height);
+                height = maxSize;
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+              resolve(canvas.toDataURL('image/jpeg', 0.85)); 
+            } else {
+              resolve(dataUrl);
+            }
+          };
+          img.src = dataUrl;
+        });
+      };
+
+      useEffect(() => {
+        const handlePaste = (e) => {
+          const items = e.clipboardData?.items;
+          if (!items) return;
+          for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+              const blob = items[i].getAsFile();
+              processImageFile(blob);
+              break;
+            }
+          }
+        };
+
+        window.addEventListener('paste', handlePaste);
+        return () => window.removeEventListener('paste', handlePaste);
+      }, [apiKeyInput]); 
+
+      const processImageFile = async (file) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          const resizedDataUrl = await resizeImageIfNeeded(event.target.result);
+          setCurrentImage(resizedDataUrl);
+          setCurrentTargets([]);
+          if (apiKeyInput) {
+             await analyzeImage(resizedDataUrl); 
+          }
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
+      };
+
+      const handleDragLeave = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+      };
+
+      const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) {
+          processImageFile(file);
+        }
+      };
+
+      const handleSaveKey = (e) => {
+        const val = e.target.value;
+        setApiKeyInput(val);
+        localStorage.setItem('ai_api_key', val);
+      };
+
+      const fetchWithRetry = async (url, options, retries = 3) => {
+        for (let i = 0; i < retries; i++) {
+          try {
+            const res = await fetch(url, options);
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+            return await res.json();
+          } catch (err) {
+            if (i === retries - 1) throw err;
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+      };
+
+      const handleGenerateImage = async () => {
+        if (!apiKeyInput) return;
+        
+        setIsGenerating(true);
+        setStatusMsg('מצייר את העולם...');
+        setCurrentImage(null);
+        setCurrentTargets([]);
+        
+        try {
+          const data = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${apiKeyInput}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              instances: { prompt: prompt },
+              parameters: { sampleCount: 1 }
+            })
+          });
+
+          if (data?.predictions?.[0]) {
+            const base64Str = `data:image/jpeg;base64,${data.predictions[0].bytesBase64Encoded}`;
+            const resizedDataUrl = await resizeImageIfNeeded(base64Str);
+            setCurrentImage(resizedDataUrl);
+            await analyzeImage(resizedDataUrl);
+          } else {
+            throw new Error('API returned empty');
+          }
+        } catch (error) {
+          alert('שגיאה ביצירת התמונה. אנא וודאו שמפתח ה-API תקין ויש לו הרשאות מתאימות ל-Imagen.');
+          console.error(error);
+        } finally {
+          setIsGenerating(false);
+          setStatusMsg('');
+        }
+      };
+
+      const handleImageUpload = (e) => {
+        processImageFile(e.target.files[0]);
+      };
+
+      const handleMenuBgUpload = async (e, setter) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          const resizedDataUrl = await resizeImageIfNeeded(event.target.result, 500);
+          setter(resizedDataUrl);
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const analyzeImage = async (base64Img) => {
+        if (!apiKeyInput) return;
+        
+        setIsAnalyzing(true);
+        setStatusMsg('ה-AI סורק את התמונה ומציע שם וקושי...');
+        try {
+          const pureBase64 = base64Img.split(',')[1]; 
+          const data = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKeyInput}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: 'Analyze this hidden object style game map. You need to return a JSON object with two keys ONLY: "name" (a catchy Hebrew title for this map, e.g., "כפר הפינגווינים"), and "difficulty" (string, strictly either "easy", "medium", or "hard" based on how cluttered it is).' },
+                  { inlineData: { mimeType: "image/jpeg", data: pureBase64 } }
+                ]
+              }],
+              generationConfig: { responseMimeType: "application/json" }
+            })
+          });
+
+          const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (responseText) {
+            const parsed = JSON.parse(responseText);
+            if (parsed.name) setCurrentName(parsed.name);
+            if (parsed.difficulty && ['easy', 'medium', 'hard'].includes(parsed.difficulty)) {
+              setCurrentDifficulty(parsed.difficulty);
+            }
+          }
+        } catch (error) {
+          console.error("Analysis failed", error);
+        } finally {
+          setIsAnalyzing(false);
+          setStatusMsg('');
+        }
+      };
+
+      const handleImageClick = (e) => {
+        const img = imageRef.current;
+        if (!img) return;
+
+        initAudio(); 
+        window.AudioEngine.playPop(); 
+
+        const rect = img.getBoundingClientRect();
+        const scaleX = img.naturalWidth / rect.width;
+        const scaleY = img.naturalHeight / rect.height;
+        
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        const targetX = Math.round(clickX * scaleX);
+        const targetY = Math.round(clickY * scaleY);
+
+        setCurrentTargets(prev => [...prev, {
+          id: Date.now(),
+          x: targetX,
+          y: targetY,
+          tolerance: 0.02,
+          cssX: ((e.clientX - rect.left) / rect.width) * 100,
+          cssY: ((e.clientY - rect.top) / rect.height) * 100
+        }]);
+      };
+
+      const removeTarget = (id, e) => {
+        e.stopPropagation(); 
+        setCurrentTargets(prev => prev.filter(t => t.id !== id));
+      };
+
+      const saveLevel = () => {
+        if (!currentImage || currentTargets.length === 0) {
+          alert('חובה לספק תמונה ולסמן לפחות יעד אחד (קליק על התמונה)!');
+          return;
+        }
+        
+        initAudio();
+        window.AudioEngine.playHappySave(); 
+
+        const newLevel = {
+          id: 'lvl_' + Date.now(),
+          name: currentName,
+          difficulty: currentDifficulty,
+          bgUrl: currentImage,
+          targets: currentTargets.map(t => ({ x: t.x, y: t.y, tolerance: t.tolerance })),
+        };
+        
+        setLevels(prev => [...prev, newLevel]);
+        alert(`השלב "${currentName}" נשמר בהצלחה למאגר! יש כעת ${levels.length + 1} שלבים.`);
+        
+        setCurrentImage(null);
+        setCurrentTargets([]);
+        setCurrentName('שלב חדש');
+      };
+
+      const exportGameHTML = () => {
+        if (levels.length === 0) {
+          alert('אין שלבים במאגר ליצא. שמור לפחות שלב אחד קודם.');
+          return;
+        }
+        
+        initAudio();
+        window.AudioEngine.playEpicWin();
+        setStatusMsg('בונה קובץ משחק... זה עשוי לקחת כמה שניות.');
+        
+        setTimeout(() => {
+          const jsonString = JSON.stringify(levels).replace(/</g, '\\u003c');
+          const finalHTML = getGameHTMLTemplate(jsonString, menuBgLeft, menuBgRight);
+          
+          const blob = new Blob([finalHTML], { type: 'text/html' });
+          const url = URL.createObjectURL(blob);
+          
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'WhereRThey_MyGame.html';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          
+          setStatusMsg('');
+        }, 800);
+      };
+
+      return (
+        <div className="font-sans text-green-900 min-h-screen flex flex-col-reverse md:flex-row" dir="rtl" onClick={initAudio} onTouchStart={initAudio}>
+          
+          <div className="w-full md:w-1/3 lg:w-1/4 bg-white border-l border-green-200 shadow-lg z-10 flex flex-col max-h-screen overflow-y-auto">
+            <div className="p-6 bg-green-700 text-white flex justify-between items-center">
+              <div>
+                 <h1 className="text-2xl font-black mb-2 flex items-center gap-2"><span>🏗️</span> מפעל השלבים</h1>
+                 <p className="text-green-200 text-sm">יצירה, ניתוח וייצוא משחקים.</p>
+              </div>
+              <button onClick={() => setShowApiSettings(!showApiSettings)} className="bg-green-800 p-2 rounded-full hover:bg-green-600 transition-colors" title="הגדרות מתקדמות / AI">
+                 ⚙️
+              </button>
+            </div>
+            
+            <div className="p-6 flex-1 flex flex-col gap-6">
+              
+              {showApiSettings && (
+                <div className="bg-indigo-50/80 p-4 rounded-xl border border-indigo-200 shadow-inner">
+                  <label className="block text-sm font-bold text-indigo-900 mb-2">מפתח API (Google AI Studio):</label>
+                  <input 
+                    type="password" 
+                    value={apiKeyInput}
+                    onChange={handleSaveKey}
+                    placeholder="AIzaSy..."
+                    className="w-full px-3 py-2 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-left" dir="ltr"
+                  />
+                  <p className="text-xs text-indigo-700 mt-2">דרוש ליצירת תמונות וניתוח אוטומטי. ניתן להשתמש ללא מפתח בהעלאה רגילה.</p>
+                </div>
+              )}
+
+              <div className="bg-green-50 p-4 rounded-xl border border-green-300 shadow-inner">
+                <label className="block text-sm font-black text-green-900 mb-2 border-b border-green-200 pb-1">🎨 רקע לתפריט המשחק המיוצא:</label>
+                <div className="space-y-3 mt-3">
+                  <div>
+                    <span className="text-xs font-bold text-green-800 block mb-1">צד ימין (למשל: נמלה):</span>
+                    <input type="file" accept="image/png" onChange={(e) => handleMenuBgUpload(e, setMenuBgRight)} className="text-xs w-full text-green-700 file:bg-green-200 file:border-0 file:rounded file:px-2 file:py-1 file:text-green-900 file:font-bold cursor-pointer hover:file:bg-green-300" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-green-800 block mb-1">צד שמאל (למשל: פינגווין):</span>
+                    <input type="file" accept="image/png" onChange={(e) => handleMenuBgUpload(e, setMenuBgLeft)} className="text-xs w-full text-green-700 file:bg-green-200 file:border-0 file:rounded file:px-2 file:py-1 file:text-green-900 file:font-bold cursor-pointer hover:file:bg-green-300" />
+                  </div>
+                </div>
+              </div>
+
+              <hr className="border-green-200" />
+
+              <div>
+                <h3 className="font-bold text-lg mb-3 flex items-center justify-between text-green-900">
+                  <span>מאגר השלבים:</span>
+                  <span className="bg-green-200 text-green-900 text-xs px-2 py-1 rounded-full font-bold">{levels.length} מוכנים</span>
+                </h3>
+                
+                {levels.length === 0 ? (
+                  <div className="text-center p-6 bg-green-50 rounded-xl border border-green-200 border-dashed text-green-700">
+                    <div className="text-4xl mb-2">🐧</div>
+                    <p className="font-bold">אין כאן כלום!</p>
+                    <p className="text-sm">בואו ניצור את השלב הראשון</p>
+                  </div>
+                ) : (
+                  <ul className="space-y-2 max-h-40 overflow-y-auto pr-2 hide-scrollbar">
+                    {levels.map((lvl, i) => (
+                      <li key={i} className="bg-white text-green-900 text-sm p-2 rounded border border-green-300 shadow-sm flex justify-between font-bold">
+                        <span>{lvl.name}</span> <span className="text-green-600">({lvl.targets.length} מטרות)</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="mt-auto pt-6">
+                <button 
+                  onClick={exportGameHTML}
+                  disabled={levels.length === 0}
+                  className={`w-full py-4 text-white font-black rounded-2xl flex justify-center items-center gap-2 transition-all chunky-btn ${levels.length > 0 ? 'bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                >
+                  <span>📦</span> ייצא קובץ משחק סופי
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 p-4 md:p-8 flex flex-col max-h-screen overflow-y-auto">
+            <div className="bg-white rounded-3xl shadow-lg border border-green-200 p-6 flex-1 flex flex-col">
+              
+              <div className="mb-8 bg-green-50 p-6 md:p-8 rounded-3xl border-2 border-green-300 shadow-inner text-center">
+                 <div className="mb-8 text-green-900">
+  <h2 className="text-3xl md:text-4xl font-black mb-4 drop-shadow-sm">
+     ברוכים הבאים למפעל השלבים של - איפה הם מסתתרים? 🐧🐧🐧
+  </h2>
+  <p className="text-lg md:text-xl font-bold text-green-800 leading-relaxed max-w-3xl mx-auto">
+    כאן תוכלו לבנות עולמות משלכם ולאתגר את החברים והמשפחה במשחק בסגנון "איפה אפי?"
+  </p>
+</div>
+                 
+                 <div className="flex flex-col md:flex-row justify-around items-center gap-6 mb-8">
+                    <div className="flex flex-col items-center flex-1">
+                       <div className="bg-white w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-md border-4 border-green-200 mb-3 z-10">🖼️</div>
+                       <h3 className="font-black text-xl text-green-800">1. מעלים תמונה</h3>
+                       <p className="text-sm text-green-700 mt-1">אפשר לצייר, לצלם או להיעזר בבינה מלאכותית.</p>
+                    </div>
+                    <div className="hidden md:block w-16 h-1 bg-green-200 rounded"></div>
+                    <div className="flex flex-col items-center flex-1">
+                       <div className="bg-white w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-md border-4 border-green-200 mb-3 z-10">🎯</div>
+                       <h3 className="font-black text-xl text-green-800">2. מסמנים מטרות</h3>
+                       <p className="text-sm text-green-700 mt-1">קליק על התמונה יסמן את האובייקטים למחבואים.</p>
+                    </div>
+                    <div className="hidden md:block w-16 h-1 bg-green-200 rounded"></div>
+                    <div className="flex flex-col items-center flex-1">
+                       <div className="bg-white w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-md border-4 border-green-200 mb-3 z-10">📦</div>
+                       <h3 className="font-black text-xl text-green-800">3. אורזים למשחק</h3>
+                       <p className="text-sm text-green-700 mt-1">מוסיפים למאגר ומייצאים קובץ HTML שאפשר לשתף.</p>
+                    </div>
+                 </div>
+
+                 <details className="text-right bg-white p-4 rounded-xl border border-green-200 cursor-pointer hover:bg-green-50 transition-colors">
+                    <summary className="font-bold text-green-800 outline-none select-none text-lg"> לחצו כאן להוראות המלאות וטיפים 📖</summary>
+                    <div className="mt-4 pt-4 border-t border-green-100 text-green-900 space-y-3 cursor-text text-base md:text-lg">
+                      <p>כאן תוכלו להרכיב משחק בסגנון "איפה אפי?" משלכם! העלו תמונה שצירתם או צילמתם או הפקתם בAI. סמנו עם העכבר את הדברים שתרצו להחביא, ובחרו רמת קושי.</p>
+                      <p>בחרו שלב קשה יותר ככל שהתמונה מפורטת ומבלבלת או שיש יותר דברים למצוא. הוסיפו את השלב למאגר והמשיכו להוספת עוד ועוד שלבים.  ולסיום, ייצאו קובץ משחק ארוז ומוכן להפעלה.</p>
+                      <p><strong>💡 טיפ עיצוב:</strong> נסו להוסיף תמונות רקע אישיות לממשק המשחק דרך הפאנל בצד ימין. חשוב שאלו יהיו תמונות מסוג PNG עם רקע שקוף. </p>
+                      <p><strong>💡 טיפ קיבולת:</strong> כדאי לבחור תמונות ברזולוציה של בערך 100PX, בכל מקרה המשחק מכווץ את התמונות שמעל ל2000PX. ועוד טיפ קטן: 15-25 שלבים זה סבבה לקובץ אחד, אז אם הוא נהיה לכם כבד תמיד אתם יכולים להכין משחק נוסף. </p>
+                     <p><strong>💡מפתח API:</strong> אפשר לג'נרט תמונות ישירות מהמודלים של ג'מיני בממשק. זה דורש חשבון בתשלום של גוגל (כנסו ל GOOGLE AI STUDIO לקבלת מפתח API) </p>
+                    </div>
+                 </details>
+              </div>
+
+              <div className="mb-8">
+                <h2 className="text-3xl font-black text-green-900 mb-6 border-b-4 border-green-200 pb-3">1. בחירת תמונת בסיס לשלב </h2>
+                
+                <div 
+                  className={`bg-white transition-all p-8 rounded-3xl border-4 border-dashed flex flex-col items-center justify-center gap-4 text-center relative shadow-sm ${isDragging ? 'border-green-600 bg-green-100 scale-[1.02]' : 'border-green-400 hover:bg-green-50'}`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  <span className="text-6xl mb-2">📁</span>
+                  <div>
+                     <span className="text-2xl font-black text-green-800 block mb-2">גררו לכאן, הדביקו (Ctrl+V) או העלו תמונה</span>
+                  </div>
+                  
+                  <div className="flex flex-wrap justify-center gap-4 mt-2">
+                    <div>
+                      <input type="file" id="local-upload" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                      <label htmlFor="local-upload" className="bg-green-600 hover:bg-green-700 text-white font-black py-3 px-6 rounded-2xl cursor-pointer text-xl inline-flex items-center gap-2 chunky-btn">
+                         <span>📁</span> בחרו מהמחשב
+                      </label>
+                    </div>
+                    <div>
+                      <input type="file" id="camera-upload" accept="image/*" capture="environment" onChange={handleImageUpload} className="hidden" />
+                      <label htmlFor="camera-upload" className="bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 px-6 rounded-2xl cursor-pointer text-xl inline-flex items-center gap-2 chunky-btn">
+                         <span>📸</span> המצלמה
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative flex py-10 items-center">
+                   <div className="flex-grow border-t-4 border-green-200"></div>
+                   <span className="flex-shrink-0 mx-6 text-green-700 font-black text-4xl bg-white px-6 py-2 rounded-full border-4 border-green-200 shadow-sm">
+                     או
+                   </span>
+                   <div className="flex-grow border-t-4 border-green-200"></div>
+                </div>
+
+                <div className="bg-indigo-50 p-8 rounded-3xl border-4 border-indigo-200 shadow-sm relative overflow-hidden">
+                   {/* Overlay if API key is missing */}
+                   {!apiKeyInput && (
+                     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gray-200/80 backdrop-blur-[2px]">
+                        <div className="bg-white p-6 rounded-2xl shadow-xl text-center border-2 border-indigo-200 max-w-md w-full mx-4">
+                          <span className="text-5xl mb-3 block">🔒</span>
+                          <h4 className="text-xl font-black text-indigo-900 mb-2">אזור הבינה המלאכותית נעול</h4>
+                          <p className="text-sm text-indigo-700 font-bold mb-4">יש להזין מפתח API של Google בהגדרות כדי לייצר תמונות</p>
+                          <button onClick={() => setShowApiSettings(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 px-6 rounded-xl transition-transform hover:scale-105 shadow-md chunky-btn">
+                            ⚙️ פתחו הגדרות והזינו מפתח
+                          </button>
+                        </div>
+                     </div>
+                   )}
+                   
+                   {/* AI Section (grayed out if no API key) */}
+                   <div className={`transition-all duration-300 ${!apiKeyInput ? 'opacity-40 grayscale blur-[1px] pointer-events-none' : ''}`}>
+                       <h3 className="text-2xl font-black text-indigo-900 mb-4 flex items-center gap-3"><span>✨</span> ציירו עולם חדש בעזרת בינה מלאכותית</h3>
+                       <div className="flex flex-col xl:flex-row gap-4">
+                          <textarea 
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
+                            disabled={!apiKeyInput}
+                            className="flex-1 border-4 border-indigo-200 rounded-2xl p-4 focus:ring-2 focus:ring-indigo-500 font-bold text-gray-800 text-lg resize-none" dir="ltr"
+                            rows="2"
+                            placeholder="Describe your scene in English..."
+                          ></textarea>
+                          <button onClick={handleGenerateImage} disabled={isGenerating || !apiKeyInput} className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-2xl px-10 py-4 rounded-2xl whitespace-nowrap transition-transform hover:scale-105 disabled:bg-gray-400 disabled:scale-100 flex items-center justify-center chunky-btn">
+                            {isGenerating ? 'מצייר...' : 'צייר תמונה'}
+                          </button>
+                       </div>
+                   </div>
+                </div>
+              </div>
+
+              {(isGenerating || isAnalyzing || statusMsg) && (
+                 <div className="bg-green-100 text-green-900 p-4 rounded-xl mb-6 font-bold flex items-center gap-3 shadow-inner border border-green-200">
+                    {statusMsg.includes('מפתח') ? '⚠️' : <div className="w-5 h-5 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div>}
+                    {statusMsg}
+                 </div>
+              )}
+
+              {currentImage && (
+                <div className="flex-1 flex flex-col min-h-0 border-t border-green-200 pt-6 mt-4">
+                  <h2 className="text-2xl font-black text-green-900 mb-4 flex justify-between items-center">
+                    <span>2. עריכת השלב וסימון מטרות</span>
+                    <button onClick={saveLevel} className="bg-green-600 hover:bg-green-700 text-white text-lg font-bold px-8 py-3 rounded-xl transition-transform hover:scale-105 chunky-btn">💾 הוסף שלב למאגר</button>
+                  </h2>
+                  
+                  <div className="flex gap-4 mb-4">
+                     <div className="flex-1">
+                        <label className="text-xs text-green-700 font-bold">שם השלב (ניתן לעריכה):</label>
+                        <input type="text" value={currentName} onChange={e => setCurrentName(e.target.value)} className="w-full border-2 border-green-200 p-2 rounded-lg bg-white font-bold text-green-900 focus:ring-2 focus:ring-green-400 focus:outline-none" />
+                     </div>
+                     <div className="w-1/3">
+                        <label className="text-xs text-green-700 font-bold">רמת קושי:</label>
+                        <select value={currentDifficulty} onChange={e => setCurrentDifficulty(e.target.value)} className="w-full border-2 border-green-200 p-2 rounded-lg bg-white font-bold text-green-900 focus:ring-2 focus:ring-green-400 focus:outline-none">
+                           <option value="easy">קל</option>
+                           <option value="medium">בינוני</option>
+                           <option value="hard">קשה</option>
+                        </select>
+                     </div>
+                  </div>
+
+                  <div className="bg-green-100/50 text-green-900 p-3 rounded-lg mb-4 text-sm border border-green-200">
+                    <strong>הוראות:</strong> לחץ על התמונה למטה כדי לסמן אלמנטים שהשחקן יצטרך לחפש. סומנו: {currentTargets.length}
+                  </div>
+
+                  <div className="border-4 border-dashed border-green-300 rounded-xl overflow-hidden bg-green-50 flex items-center justify-center flex-1 min-h-[400px] p-4">
+                     <div className="relative inline-block max-w-full">
+                       <img 
+                         ref={imageRef}
+                         src={currentImage} 
+                         className="max-h-[600px] max-w-full object-contain cursor-crosshair shadow-md block"
+                         onClick={handleImageClick}
+                         alt="Level Draft"
+                       />
+                       
+                       {currentTargets.map(t => (
+                          <div 
+                            key={t.id}
+                            className="absolute w-10 h-10 -ml-5 -mt-5 rounded-full border-4 border-green-500 bg-green-500/30 flex items-center justify-center marker-pulse cursor-pointer group hover:bg-green-500/80 transition-colors shadow-lg z-20"
+                            style={{ left: `${t.cssX}%`, top: `${t.cssY}%` }}
+                            onClick={(e) => removeTarget(t.id, e)}
+                            title="לחץ להסרה"
+                          >
+                             <span className="text-white opacity-0 group-hover:opacity-100 font-bold text-xs shadow-black drop-shadow-md">הסר</span>
+                          </div>
+                       ))}
+                     </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
