@@ -908,12 +908,8 @@
               canvas.width = width;
               canvas.height = height;
               const ctx = canvas.getContext('2d');
-              ctx.clearRect(0, 0, width, height);
               ctx.drawImage(img, 0, 0, width, height);
-
-              const originalMime = (dataUrl.match(/^data:([^;]+);/) || [])[1] || 'image/png';
-              const outputMime = originalMime === 'image/jpeg' || originalMime === 'image/jpg' ? 'image/jpeg' : 'image/png';
-              resolve(outputMime === 'image/jpeg' ? canvas.toDataURL('image/jpeg', 0.85) : canvas.toDataURL('image/png'));
+              resolve(canvas.toDataURL('image/jpeg', 0.85));
             } else {
               resolve(dataUrl);
             }

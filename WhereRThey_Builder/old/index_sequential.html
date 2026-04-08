@@ -341,17 +341,6 @@
          setIsMusicMuted(window.BgMusicPlayer.toggleMute());
       };
 
-      const resetGameProgress = () => {
-        setScore(0);
-        setCompletedLevels([]);
-        setTimeLeft(null);
-        setFoundTargets([]);
-        setSkippedTargets([]);
-        setCurrentTargetIndex(0);
-        setLevelScore(0);
-        setClickFeedback(null);
-      };
-
       const loadLevel = (levelInfo) => {
         setView('loading');
         setFoundTargets([]);
@@ -359,7 +348,7 @@
         setCurrentTargetIndex(0);
         setLevelScore(0);
         setClickFeedback(null);
-        setTimeLeft(selectedTime > 0 ? selectedTime : null);
+        if (selectedTime > 0) { setTimeLeft((timeLeft || 0) + selectedTime); }
         
         const level = JSON.parse(JSON.stringify(levelInfo));
         const img = new Image();
@@ -617,9 +606,9 @@
                   
                   {(score > 0 || completedLevels.length > 0) && (
                     <button 
-                      onClick={resetGameProgress} 
+                      onClick={() => { setScore(0); setCompletedLevels([]); }} 
                       className="bg-white border-2 border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 font-bold rounded-xl px-5 py-3 shadow-sm transition-all chunky-btn"
-                      title="אפסו את הניקוד, השלבים והטיימר"
+                      title="אפסו את הניקוד והשלבים"
                     >
                       🔄 התחילו מחדש
                     </button>
@@ -666,8 +655,8 @@
                                 <div className="w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden border-2 border-gray-100 shadow-sm bg-gray-100 group-hover:scale-105 transition-transform">
                                   <img src={lvl.bgUrl} className="w-full h-full object-cover" alt="Thumbnail" />
                                 </div>
-                                <div className="flex flex-col flex-1 min-w-0">
-                                  <span className="font-bold text-xl text-green-900 leading-tight whitespace-normal break-words mb-1 text-right">{lvl.name}</span>
+                                <div className="flex flex-col flex-1 overflow-hidden">
+                                  <span className="font-bold text-xl text-green-900 leading-tight truncate mb-1">{lvl.name}</span>
                                   <span className="text-sm font-semibold text-green-700 bg-green-100/50 px-2 py-1 rounded-lg inline-block w-max">
                                     🔍 {lvl.targets.length} פריטים לחפש
                                   </span>
@@ -714,7 +703,7 @@
 
                 <div className="flex justify-between items-center w-[90vw] mx-auto mb-3">
                   <button onClick={() => setView('menu')} className="text-white font-bold bg-red-600 hover:bg-red-700 px-5 py-2 rounded-xl transition-colors chunky-btn border-2 border-red-800">🚪 יציאה</button>
-                  <h2 className="text-lg md:text-2xl font-black text-green-800 whitespace-normal break-words text-center mx-3 max-w-[45vw]">{activeLevel.name}</h2>
+                  <h2 className="text-lg md:text-2xl font-black text-green-800 truncate mx-3">{activeLevel.name}</h2>
                   <div className="flex items-center gap-3">
                     {timeLeft !== null && (
                       <div className={"flex items-center gap-2 px-4 py-2 rounded-full font-bold text-lg " + (timeLeft <= 5 ? "bg-red-100 text-red-700 animate-pulse border border-red-300" : "bg-green-100 text-green-800")}>
@@ -908,12 +897,8 @@
               canvas.width = width;
               canvas.height = height;
               const ctx = canvas.getContext('2d');
-              ctx.clearRect(0, 0, width, height);
               ctx.drawImage(img, 0, 0, width, height);
-
-              const originalMime = (dataUrl.match(/^data:([^;]+);/) || [])[1] || 'image/png';
-              const outputMime = originalMime === 'image/jpeg' || originalMime === 'image/jpg' ? 'image/jpeg' : 'image/png';
-              resolve(outputMime === 'image/jpeg' ? canvas.toDataURL('image/jpeg', 0.85) : canvas.toDataURL('image/png'));
+              resolve(canvas.toDataURL('image/jpeg', 0.85));
             } else {
               resolve(dataUrl);
             }
@@ -1553,13 +1538,10 @@
                         <div className="text-green-900 font-black whitespace-nowrap text-sm px-2">
                           סדר מטרות למשחק  -אפשר להזיז עם החצים שמופיעים על גבי המטרות
                         </div>
-                        <div className="flex flex-wrap gap-3 flex-1 w-full items-center py-2 px-1">
+                        <div className="flex gap-3 overflow-x-auto hide-scrollbar flex-1 w-full items-center py-2 px-1">
                           {currentTargets.map((t, index) => (
                             <div key={t.id} className="relative group w-14 h-14 md:w-16 md:h-16 flex-shrink-0 rounded-full border-4 border-green-500 shadow-md overflow-hidden bg-white">
                               {t.cropUrl && <img src={t.cropUrl} className="object-contain w-full h-full transform scale-110" />}
-                              <div className="absolute top-0 right-0 min-w-[1.35rem] h-5 px-1 bg-green-700 text-white text-[10px] md:text-xs font-black rounded-bl-lg flex items-center justify-center shadow">
-                                {index + 1}
-                              </div>
                               <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity gap-1">
                                 <div className="flex gap-2">
                                   <button onClick={() => moveTarget(index, -1)} disabled={index === 0} className="text-white bg-gray-900/80 rounded w-6 h-6 flex items-center justify-center hover:bg-black disabled:opacity-30">▶</button>
